@@ -27,44 +27,47 @@ class MoneyWellSpent
     agent.follow_meta_refresh = true
     agent.redirect_ok = true
 
-    page = agent.get(@@cfg[:url])
-    login_form = page.form('signIn')
-    login_form.email = @@cfg[:login]
-    login_form.password = @@cfg[:password]
-
-    puts "Logging in to amazon.#{@@cfg[:site]}"
-    page = agent.submit(login_form, login_form.buttons.last)
-
-    print "Retrieving order history"
-    arr = []
-    arr = page.parser.xpath('//*[@class="price"]').xpath('text()').to_a
-
-    if arr.empty?
-      $log.warn "\nError retreiving orders or no orders available on " +
-        "amazon.#{@@cfg[:site]} during #{@@cfg[:year]}\n" +
-        "Is the supplied password correct?"
-      exit 1
-    end
-
-    while !(page.link_with(:text => "#{@@cfg[:next]} »").nil?)
-      page = page.link_with(:text => "#{@@cfg[:next]} »").click
-      arr.concat(page.parser.xpath('//*[@class="price"]').xpath('text()').to_a)
-      print "."
-    end
-
     sum = BigDecimal("0")
-    arr.each do |price|
-      if %w(de fr).include? @@cfg[:site]
-        value = BigDecimal(price.content.split(' ')[1].gsub(/\./, '').gsub(/,/, '.'))
-      elsif %w(com).include? @@cfg[:site]
-        value = BigDecimal(price.content.gsub(/\$/, ''))
-      elsif %w(co.uk).include? @@cfg[:site]
-        value = BigDecimal(price.content.gsub(/\$/, ''))
+    for year in @@cfg[:year]..Date.today.year
+      url = "https://www.amazon.#{@@cfg[:site]}/gp/css/order-history?opt=ab&digitalOrders=1&unifiedOrders=0&orderFilter=year-#{year}"
+      page = agent.get(url)
+
+      login_form = page.form('signIn')
+      if not login_form.nil?
+        login_form.email = @@cfg[:login]
+        login_form.password = @@cfg[:password]
+
+        puts "Logging in to amazon.#{@@cfg[:site]}"
+        page = agent.submit(login_form, login_form.buttons.last)
       end
-      sum += value
+
+      print "Retrieving order history for #{year}"
+      arr = page.parser.xpath('//*[@class="price"]').xpath('text()').to_a
+
+      if arr.empty?
+        $log.warn "\nError retreiving orders or no orders available on " +
+          "amazon.#{@@cfg[:site]} during #{year}"
+      end
+
+      while !(page.link_with(:text => "#{@@cfg[:next]} »").nil?)
+        page = page.link_with(:text => "#{@@cfg[:next]} »").click
+        arr.concat(page.parser.xpath('//*[@class="price"]').xpath('text()').to_a)
+        print "."
+      end
+
+      arr.each do |price|
+        if %w(de fr).include? @@cfg[:site]
+          value = BigDecimal(price.content.split(' ')[1].gsub(/\./, '').gsub(/,/, '.'))
+        elsif %w(com).include? @@cfg[:site]
+          value = BigDecimal(price.content.gsub(/\$/, ''))
+        elsif %w(co.uk).include? @@cfg[:site]
+          value = BigDecimal(price.content.gsub(/\$/, ''))
+        end
+        sum += value
+      end
+      puts
     end
-    puts 
-    puts sum.truncate(2).to_s('F')
+    puts "Total money spent, so far: EUR " + sum.truncate(2).to_s('F')
   end
 
   def self.parseopts()
@@ -85,8 +88,8 @@ class MoneyWellSpent
         attrs[:password] = password
       end
       opts.on("-y [YEAR]", "--year [YEAR]",
-        "Specify the year to be summed up") do |year|
-        attrs[:year] = year
+        "Specify the first year to be summed up") do |year|
+        attrs[:year] = year.to_i
       end
       opts.on("-s [SITE]", "--site [SITE]",
         "Specify the site to be queried. " +
@@ -145,8 +148,8 @@ class MoneyWellSpent
       }
     end
     unless @@cfg[:year]
-      $log.debug "No year given, asking"
-      @@cfg[:year] = ask("Enter the year to be summed up:  ") { |q|
+      $log.debug "No start year given, asking"
+      @@cfg[:year] = ask("Enter the first year to be summed up:  ", Integer) { |q|
         q.echo = true
       }
     end
@@ -170,8 +173,6 @@ class MoneyWellSpent
       $log.warn "\t" + valid_sites.join(" ")
       exit 1
     end
-    @@cfg[:url] = "https://www.amazon.#{@@cfg[:site]}/gp/css/order-history?" +
-      "opt=ab&digitalOrders=1&unifiedOrders=0&orderFilter=year-#{@@cfg[:year]}"
   end
 end
 
